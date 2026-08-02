@@ -7,7 +7,8 @@ const app = express();
 
 app.use(express.json());
 
-const users = {};
+const DUMMY_HASH = await bcrypt.hash("dummy", 10);
+const users = {}; // { id: string; email: string; passwordHash: string}
 
 app.get("/health", (req, res) => {
   return res.json({ status: "ok" });
@@ -31,6 +32,35 @@ app.post("/signup", async (req, res) => {
   users[email] = { id: randomUUID(), email, passwordHash };
 
   return res.status(201).json({ status: "ok" });
+});
+
+app.post("/login", async (req, res) => {
+  const { email = "", password = "" } = req.body || {};
+
+  // 이메일이나 비밀번호 값이 falsy하면 에러처리
+  if (!email || !password) {
+    return res.status(400).json({ error: "이메일과 비밀번호는 필수입니다." });
+  }
+
+  const user = users[email];
+
+  if (user) {
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+
+    if (!isMatch) {
+      return res
+        .status(401)
+        .json({ error: "이메일 또는 비밀번호가 올바르지 않습니다." });
+    }
+  } else {
+    const isMatch = await bcrypt.compare(password, DUMMY_HASH);
+
+    return res
+      .status(401)
+      .json({ error: "이메일 또는 비밀번호가 올바르지 않습니다." });
+  }
+
+  return res.status(200).json({ id: user.id, email });
 });
 
 app.listen(3000, () => {
