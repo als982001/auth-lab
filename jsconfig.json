@@ -17,6 +17,6 @@
     "maxNodeModuleJsDepth": 0,
     "skipLibCheck": true
   },
-  "include": ["*.js"],
+  "include": ["*.js", "types/**/*.d.ts"],
   "exclude": ["node_modules"]
 }
