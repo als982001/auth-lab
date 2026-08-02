@@ -46,36 +46,36 @@
 - [x] M0 — 환경 셋업 + 서버 기동 ✅ `GET /health` → `{"status":"ok"}` 확인
 - [x] M1 — 회원가입 (해싱) ✅ bcrypt cost 10, 201/400/409 분기, 8개 케이스 검증
 - [x] M2 — 로그인 ✅ 실패 응답 통일(401), 더미 해시로 타이밍 등화 (차이 1.9ms)
-- [ ] **M3** — JWT 발급 ← **현재 여기**
-- [ ] M4 — 인증 미들웨어 + 보호 라우트
+- [x] M3 — JWT 발급 ✅ HS256, `sub`=user id, 15분 만료, 시크릿 누락 시 fail fast
+- [ ] **M4** — 인증 미들웨어 + 보호 라우트 ← **현재 여기**
 - [ ] M5 — Refresh 토큰
 - [ ] M6 — 보안 하드닝
 
-## 6. 다음 할 일 — M3: JWT 발급
+## 6. 다음 할 일 — M4: 인증 미들웨어 + 보호 라우트
 
 > 개념 설명 → 직접 작성 → 채점 순서.
 
-**학습 개념:** 토큰 구조(`header.payload.signature`), 서명이 보장하는 것(= 기밀성이 아니라 **위조 방지**), 만료(`exp`), JWT vs 세션 트레이드오프
+**학습 개념:** 미들웨어의 동작 원리(`next()`), `Authorization: Bearer` 헤더, `jwt.verify` 예외 처리, `req.user` 주입, 401 vs 403
 
 **할 일:**
 
-1. `jsonwebtoken` 설치
-2. 서명 키를 `.env`로 분리 (`.gitignore`에 이미 등록됨 — 코드에 하드코딩 금지)
-3. 로그인 성공 시 access token 발급 → 응답에 반환
-4. payload에 **최소한만** 담기 (`id` 등 — 비밀번호·해시·민감정보 금지)
-5. 만료(`expiresIn`) 설정
+1. 인증 미들웨어 작성 — `Authorization` 헤더에서 토큰 추출 → `jwt.verify`
+2. 검증 성공 시 `req.user` 주입 후 `next()`
+3. 실패 시 `401` (만료/서명 오류/헤더 없음)
+4. `GET /me` 보호 라우트 — 미들웨어를 통과한 요청만 처리
 
-**완료 기준:** `POST /login` 성공 시 access token 반환, [jwt.io](https://jwt.io)에서 디코딩하면 payload가 보이고 서명 검증이 통과
+**완료 기준:** 유효 토큰으로 `GET /me` 성공, 토큰 없음·위조·만료 모두 `401`
 
-**제출:** 작성한 코드 채점 요청 → 통과 시 M4(인증 미들웨어)로.
+**제출:** 작성한 코드 채점 요청 → 통과 시 M5(Refresh 토큰)로.
 
-### M1~M2에서 얻은 것
+### M1~M3에서 얻은 것
 
 - `express.json()`은 **`Content-Type: application/json`일 때만** 파싱한다. 아니면 `req.body`가 `undefined` (Express 4는 `{}`였다 — 옛날 예제와 어긋나는 지점)
 - **검증 코드보다 앞줄에서 터지면 검증은 무의미하다.** 구조분해에 기본값(`req.body || {}`)을 줘서 검증까지 도달시킬 것
 - `?.`는 **진짜 nullish일 수 있는 곳에만.** 남발하면 "이건 왜 없을 수 있지?"를 매번 고민하게 되어 코드가 흐려진다
 - **응답에서 새는 정보 = 내용 + 시간.** 두 채널을 각각 막아야 한다 (사이드 채널)
 - **툴이 잡는 것과 사람이 잡아야 하는 것은 다르다.** 오타·타입 오용은 `checkJs`가 잡지만, `res.json({ user })`로 해시가 새는 건 문법상 완벽히 올바른 코드라 아무 툴도 못 잡는다
+- **fail fast** — 잘못된 설정이면 요청을 받기 전에 죽는 게 낫다. `process.exit(1)`로 종료해야 배포 파이프라인이 실패로 인식한다 (`exit(0)`은 정상 종료로 읽혀 조용히 넘어감)
 - 운영에서 `NODE_ENV=production`을 안 걸면 **에러 응답에 스택 트레이스(절대 경로 포함)가 노출**된다 → M6에서 커스텀 에러 핸들러로 정리
 - 깨진 JSON은 `400`이 나가지만 body가 **HTML**이라 응답 형식이 일관되지 않다 → M6 항목
 
@@ -88,6 +88,7 @@
 | [`m0-express-basics.md`](docs/m0-express-basics.md)     | Express 구조, 라우팅, `req`/`res`, ESM, **`req` 통째 로깅 금지 규칙**         |
 | [`m1-password-hashing.md`](docs/m1-password-hashing.md) | 평문·SHA256이 안 되는 이유, 솔트, bcrypt cost factor, `express.json()`        |
 | [`m2-login.md`](docs/m2-login.md)                       | `bcrypt.compare`, user enumeration, **타이밍 공격과 더미 해시** (실측값 포함) |
+| [`m3-jwt.md`](docs/m3-jwt.md)                           | JWT 구조, **서명 ≠ 암호화**, payload 원칙, 만료, JWT vs 세션, 시크릿 관리     |
 
 > 규칙: **개념 설명이 나올 때마다 같은 형식으로 문서를 추가한다.** (한 줄 요약 → 본문 → 복습 체크리스트 → 흔한 실수)
 

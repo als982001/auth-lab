@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import bcrypt from "bcrypt";
 import express from "express";
+import jwt from "jsonwebtoken";
 
 const app = express();
 
@@ -60,8 +61,18 @@ app.post("/login", async (req, res) => {
       .json({ error: "이메일 또는 비밀번호가 올바르지 않습니다." });
   }
 
-  return res.status(200).json({ id: user.id, email });
+  const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, {
+    expiresIn: "15m",
+  });
+
+  return res.status(200).json({ token });
 });
+
+// 혹시 모르는 예외 처리
+if (!process.env.JWT_SECRET) {
+  console.error("JWT_SECRET 환경변수가 없습니다.");
+  process.exit(1);
+}
 
 app.listen(3000, () => {
   console.log("3000 포트");
