@@ -100,6 +100,7 @@
 | [`m2-login.md`](docs/m2-login.md)                       | `bcrypt.compare`, user enumeration, **타이밍 공격과 더미 해시** (실측값 포함)  |
 | [`m3-jwt.md`](docs/m3-jwt.md)                           | JWT 구조, **서명 ≠ 암호화**, payload 원칙, 만료, JWT vs 세션, 시크릿 관리      |
 | [`m4-auth-middleware.md`](docs/m4-auth-middleware.md)   | 미들웨어 원리(**같은 `req`가 흐른다**), Bearer 헤더, `verify` 예외, 401 vs 403 |
+| [`m5-refresh-token.md`](docs/m5-refresh-token.md)       | ⏳ **구현 전 (개념만)** — 역할 분리, XSS vs CSRF, 쿠키 옵션, 회전, 재사용 탐지 |
 
 > 규칙: **개념 설명이 나올 때마다 같은 형식으로 문서를 추가한다.** (한 줄 요약 → 본문 → 복습 체크리스트 → 흔한 실수)
 
