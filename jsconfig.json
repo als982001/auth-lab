@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    // .js 파일을 타입 검사한다. 컴파일은 하지 않는다 (noEmit)
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+
+    // strict를 켜면 users = {} 같은 코드마다 "타입 명시해라" 노이즈가 쏟아진다.
+    // 지금 목적은 오타·API 오용 검출이므로 false 유지.
+    "strict": false,
+
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "esnext",
+
+    // 라이브러리 내부 JS까지 검사하면 남의 코드 에러가 쏟아진다. 내 코드만 본다.
+    "maxNodeModuleJsDepth": 0,
+    "skipLibCheck": true
+  },
+  "include": ["*.js"],
+  "exclude": ["node_modules"]
+}
