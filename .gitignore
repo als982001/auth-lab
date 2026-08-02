@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# 환경변수 — M3의 JWT 서명 키가 여기 들어간다. 절대 커밋 금지.
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# 툴 캐시
+.claude/tsc-cache/
