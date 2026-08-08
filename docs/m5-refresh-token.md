@@ -2,7 +2,7 @@
 
 > **한 줄 요약**: 토큰 하나로 "짧아서 안전"과 "길어서 편함"을 동시에 만족시킬 수 없다. **역할을 둘로 쪼개서** access는 짧게·무상태로, refresh는 길게·서버 저장으로 가져간다. 그러면 JWT의 최대 약점인 **무효화 불가**도 함께 풀린다.
 
-> ⚠️ **이 문서는 아직 구현 전이다.** 개념만 정리된 상태. 구현은 다음 세션에서.
+> ✅ **구현 완료.** 서버(`index.js`) + 검증용 클라이언트(`public/index.html`). 구현하며 실제로 부딪힌 것들은 **13절**에 정리했다.
 
 ---
 
@@ -260,3 +260,166 @@ curl이 저장한 쿠키: refreshToken  eyJhbGci...
 | 서버 저장 없이 JWT 검증만         | 로그아웃해도 무효화 불가 — 세션의 장점을 못 챙김                     |
 | 재사용 탐지 시 해당 토큰만 폐기   | 공격자가 이미 받아간 새 토큰이 살아있음. **유저 전체 무효화**가 맞다 |
 | 클라이언트에서 `credentials` 누락 | 쿠키가 아예 안 실려 `/refresh`가 계속 401                            |
+
+---
+
+## 13. 구현하며 실제로 부딪힌 것
+
+문서를 쓸 때는 몰랐고 코드를 짜면서 드러난 것들. **여기가 이 문서에서 제일 값어치 있는 부분이다.**
+
+### (1) `path: "/refresh"` 와 `/logout` 이 충돌한다
+
+쿠키를 `path: "/refresh"` 로 심으면 브라우저는 **`/refresh` 에만** 쿠키를 보낸다. 그래서 `POST /logout` 에서는 `req.cookies.refreshToken` 이 `undefined` 가 되고, 저장소를 지우는 로직이 통째로 안 돈다.
+
+해결은 **공통 prefix**. 라우트를 `/auth/refresh`, `/auth/logout` 으로 옮기고 쿠키 `path` 를 `/auth` 로 두면 둘 다 받는다.
+
+> `path: "/"` 로 넓히는 방법도 있지만 그러면 모든 요청에 딸려가 나눈 의미가 사라진다.
+
+### (2) `clearCookie` 는 심을 때와 같은 `path` 를 줘야 한다
+
+```
+심을 때 : Set-Cookie: refreshToken=...; Path=/auth; HttpOnly; Secure; SameSite=Strict
+지울 때 : Set-Cookie: refreshToken=;    Path=/;     Expires=Thu, 01 Jan 1970 ...
+                                        ^^^^^^ 안 맞으면 브라우저가 안 지운다
+```
+
+쿠키의 **신원은 `name` + `domain` + `path`** 다. 이 셋이 같아야 같은 쿠키로 취급된다. `httpOnly`·`secure`·`sameSite` 는 동작 규칙이라 삭제엔 영향이 없다.
+
+```js
+res.clearCookie("refreshToken", { path: "/auth" });
+```
+
+> HTTP에는 "쿠키 삭제" 명령이 없다. `clearCookie` 가 하는 일은 **값을 비우고 `Expires` 를 1970년으로 설정해 다시 보내는 것** — 이미 만료된 쿠키를 심어서 브라우저가 스스로 버리게 만든다.
+
+### (3) `expiresAt: ""` 는 "1970년에 만료됨"이 된다
+
+회전할 때 `expiresAt` 을 빈 문자열로 두면:
+
+```
+Date.now() > ""  →  true      (Number("") === 0 이라 0과 비교됨)
+```
+
+**방금 발급한 토큰이 즉시 만료 판정**된다. 증상은 "2차 refresh가 401"인데, 원인이 "저장소에 없음"에서 "만료됨"으로 옮겨간 것뿐이라 에러 메시지를 구분해두지 않으면 헷갈린다.
+
+> `undefined` 였다면 `Date.now() > undefined` → **`false`** (NaN 비교는 항상 false)가 되어 **만료가 영원히 안 걸리는** 반대 버그가 났을 것이다. 빈 문자열이 그나마 눈에 띄게 터진 셈.
+
+### (4) 회전은 "새 키에 저장 + 옛 키 삭제" 둘 다여야 한다
+
+흔한 실수 조합:
+
+```js
+refreshTokens[refreshToken] = { ... };   // ❌ 옛 키에 씀 (newRefreshToken 이어야)
+delete refreshTokens[refreshToken];      // 방금 쓴 걸 바로 지움 → 아무것도 저장 안 됨
+```
+
+쿠키로는 새 토큰이 나가는데 서버 저장소엔 없어서 **다음 `/refresh` 가 무조건 401**. 즉 refresh를 한 번 쓰면 그다음부터 못 쓴다.
+
+### (5) CORS 최소 설정 — `*` 는 못 쓴다
+
+```js
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "http://localhost:5173");
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+```
+
+- `Content-Type: application/json` 은 **단순 요청이 아니라** 브라우저가 `OPTIONS` **preflight** 를 먼저 보낸다. 이 분기를 처리하지 않으면 본 요청이 아예 안 나간다
+- **`credentials` 를 쓰면 `Access-Control-Allow-Origin: *` 가 거부된다.** "아무 사이트나 사용자 인증으로 API를 호출"하는 걸 막기 위해 정확한 origin 문자열을 요구한다
+- `Authorization` 을 `Allow-Headers` 에 빠뜨리면 `/me` 만 실패한다
+
+### (6) CORS는 요청이 아니라 **응답 읽기**를 막는다
+
+허용하지 않은 출처에서 회원가입을 보내본 결과:
+
+```
+POST /signup (Origin: https://evil.com)
+→ HTTP/1.1 201 Created                              서버가 처리함
+→ Access-Control-Allow-Origin: http://localhost:5173  (불일치)
+
+계정이 만들어졌나? → 로그인 200 {"token":"eyJ..."}   실제로 생성됨
+```
+
+**요청은 막히지 않았고 부작용도 일어났다.** 브라우저는 응답을 JS에 넘기지 않을 뿐이다.
+
+|                                 | preflight | 서버 실행?                            |
+| ------------------------------- | --------- | ------------------------------------- |
+| 단순 요청 (GET, 폼 POST)        | 없음      | ✅ 실행됨. 응답만 차단                |
+| 비단순 요청 (JSON, 커스텀 헤더) | 있음      | ❌ preflight에서 막혀 본 요청이 안 감 |
+
+**결론 두 가지:**
+
+1. **CORS는 서버 보안 장치가 아니다.** 브라우저만 지키는 규칙이라 curl·Postman·서버간 통신엔 적용되지 않는다 (M0~M5의 모든 테스트를 curl로 통과시킨 게 그 증거)
+2. **CORS는 서버가 아니라 사용자를 보호한다.** "남의 사이트가 내 인증으로 API를 읽어가는 것"을 막는다
+3. **CORS로는 CSRF를 못 막는다.** CSRF는 응답을 읽을 필요가 없기 때문. 그래서 `sameSite` 가 따로 필요하다
+
+|            | 막는 것                                   |
+| ---------- | ----------------------------------------- |
+| CORS       | 남의 사이트가 응답을 **읽는** 것          |
+| `SameSite` | 남의 사이트발 요청에 **쿠키가 실리는** 것 |
+
+### (7) `ERR_CONNECTION_REFUSED` 는 CORS 에러가 아니다
+
+| 에러                     | 뜻                                   | 원인                          |
+| ------------------------ | ------------------------------------ | ----------------------------- |
+| `ERR_CONNECTION_REFUSED` | **TCP 연결 자체가 거부**             | 서버가 안 떠 있음 / 포트 틀림 |
+| `blocked by CORS policy` | 연결은 됐는데 브라우저가 응답을 차단 | CORS 헤더 문제                |
+
+**CORS 에러는 서버에 도달한 뒤에야 나올 수 있다.** 연결이 안 되면 판단할 응답 자체가 없다. `CONNECTION_REFUSED` 가 뜨면 CORS를 아무리 만져도 소용없고 서버 생존부터 확인해야 한다.
+
+### (8) 쿠키는 포트를 구분하지 않는다
+
+```
+localhost:3000  ─┐
+localhost:5173  ─┼─ 전부 "localhost" 하나로 취급 → 쿠키 공유
+localhost:8080  ─┘
+```
+
+**CORS는 origin(프로토콜+도메인+포트) 기준인데 쿠키는 도메인 기준이다.** 두 규칙의 기준이 달라 헷갈리기 쉽다.
+
+그래서 `document.cookie` 에 다른 localhost 프로젝트의 쿠키가 섞여 보인다. 실제로 Supabase를 쓰는 다른 프로젝트의 `sb-...-auth-token` 이 보였다.
+
+**이게 오히려 좋은 대조군이 된다:**
+
+| 쿠키                           | `document.cookie` 에 |                      |
+| ------------------------------ | -------------------- | -------------------- |
+| `sb-...-auth-token` (Supabase) | ✅ 보임              | `httpOnly` 아님      |
+| `refreshToken` (우리 것)       | ❌ 안 보임           | **`httpOnly: true`** |
+
+같은 브라우저, 같은 호출인데 하나는 읽히고 하나는 안 읽힌다. `httpOnly` 가 작동한다는 직접 증거다. 콘솔에서 확인:
+
+```js
+document.cookie.includes("refreshToken"); // → false 여야 정상
+```
+
+### (9) `secure: true` 쿠키는 curl이 http에서 저장하지 않는다
+
+브라우저는 localhost를 신뢰할 수 있는 출처로 취급해 예외를 두지만, **curl은 그렇지 않다.** `-c` 로 쿠키통을 만들어도 비어 있다.
+
+curl로 테스트하려면 헤더에 직접 실어야 한다.
+
+```bash
+curl -X POST localhost:3000/auth/refresh -H "Cookie: refreshToken=<값>"
+```
+
+### (10) 정적 서버를 프로젝트 루트에서 돌리면 `.env` 가 노출된다
+
+```
+npx serve -l 5173          # ❌ http://localhost:5173/.env 로 시크릿이 통째로 다운로드됨
+npx serve public -l 5173   # ✅ public/ 하위만 노출
+```
+
+그래서 클라이언트를 `public/` 에 두었다. 확인:
+
+```
+/           → 200
+/.env       → 404
+/index.js   → 404
+```

@@ -48,33 +48,37 @@
 - [x] M2 — 로그인 ✅ 실패 응답 통일(401), 더미 해시로 타이밍 등화 (차이 1.9ms)
 - [x] M3 — JWT 발급 ✅ HS256, `sub`=user id, 15분 만료, 시크릿 누락 시 fail fast
 - [x] M4 — 인증 미들웨어 + 보호 라우트 ✅ `GET /me` 보호, 9개 케이스 401 검증, 미들웨어에서 유저 조회
-- [ ] **M5** — Refresh 토큰 ← **현재 여기**
-- [ ] M6 — 보안 하드닝
+- [x] M5 — Refresh 토큰 ✅ 회전 3회 연속 검증, httpOnly 쿠키 + `path=/auth`, logout 무효화, 브라우저 확인
+- [ ] **M6** — 보안 하드닝 ← **현재 여기**
 
-## 6. 다음 할 일 — M5: Refresh 토큰
+## 6. 다음 할 일 — M6: 보안 하드닝
 
 > 개념 설명 → 직접 작성 → 채점 순서.
 
-**학습 개념:** 토큰 회전(rotation), `httpOnly` 쿠키, 저장 위치 트레이드오프(쿠키 vs localStorage), 재사용 탐지
+**학습 개념:** CORS 정식 설정, CSRF 방어, rate limit, 보안 헤더, 에러 응답 표준화
 
-**배경:** access token이 15분이라 지금은 15분마다 재로그인해야 한다. 수명을 늘리면 유출 시 피해 창이 커진다. 이 딜레마를 푸는 게 refresh 토큰이다.
+**배경:** 인증 흐름은 M5로 완성됐다. M6는 **이미 동작하는 것을 실전에서 버티게** 만드는 단계다.
 
-**할 일:**
+**할 일 (후보 — 착수 시 범위 확정):**
 
-1. 로그인 시 access(짧게) + refresh(길게) 2종 발급
-2. refresh는 **`httpOnly` 쿠키**로 (JS가 못 읽게)
-3. 서버에 refresh 저장 — **무효화 가능하게** (JWT의 약점을 여기서 보완)
-4. `POST /refresh` — refresh 검증 후 새 access 발급
-5. 사용한 refresh는 폐기하고 새로 발급 (**회전**)
-6. **검증용 `index.html` 1장 추가** — 프레임워크 없이 `fetch` 몇 줄, **별도 포트**로 띄워 cross-origin 구성
+1. **CORS 정식화** — 현재는 origin이 하드코딩. `process.env.CLIENT_ORIGIN`으로 분리
+2. **rate limit** — 로그인 무차별 대입 방어 (M2의 타이밍 등화만으로는 부족)
+3. **보안 헤더** — `helmet` 또는 수동 (`X-Content-Type-Options`, `X-Frame-Options` 등)
+4. **에러 응답 표준화** — 아래 이월 항목 2건 해결
+5. **재사용 탐지** — 폐기된 refresh가 다시 오면 해당 유저 전체 무효화 (M5 문서 7절)
 
-**완료 기준:** access 만료 후 refresh로 재발급 + `index.html`에서 브라우저 동작 확인 (`httpOnly` 쿠키가 JS로 안 읽히는 것까지)
+**완료 기준:** 보호 장치 적용 + 브라우저에서 회귀 없음
 
-**제출:** 작성한 코드 채점 요청 → 통과 시 M6(보안 하드닝)로.
+**제출:** 작성한 코드 채점 요청 → 통과 시 M6 완료 (이후 DB 전환은 별도 판)
 
-> ⚠️ M5부터는 **curl로 검증이 안 되는 영역**이 나온다. `httpOnly`·쿠키 자동 전송·CORS는 브라우저만 강제하므로 여기서 처음 화면이 필요해진다. (3절 "클라이언트" 규칙 참고)
+### M6로 이월된 항목
 
-### M1~M4에서 얻은 것
+- 운영에서 `NODE_ENV=production`을 안 걸면 **에러 응답에 스택 트레이스(절대 경로 포함)가 노출**된다 → 커스텀 에러 핸들러
+- 깨진 JSON은 `400`이 나가지만 body가 **HTML**이라 응답 형식이 일관되지 않다
+- CORS origin 하드코딩 (`"http://localhost:5173"`) → 환경변수로
+- `/auth/refresh` 만료 분기의 `res.status(401).json()`이 **빈 body** — 다른 응답과 형식 불일치
+
+### M1~M5에서 얻은 것
 
 - `express.json()`은 **`Content-Type: application/json`일 때만** 파싱한다. 아니면 `req.body`가 `undefined` (Express 4는 `{}`였다 — 옛날 예제와 어긋나는 지점)
 - **검증 코드보다 앞줄에서 터지면 검증은 무의미하다.** 구조분해에 기본값(`req.body || {}`)을 줘서 검증까지 도달시킬 것
@@ -86,21 +90,24 @@
 - **`try` 범위는 예외를 던질 것으로 예상되는 줄만** 감싼다. 넓으면 무관한 버그가 401로 둔갑해 원인 파악이 늦어진다 (실제로 겪음)
 - **`any`는 아무 검사도 받지 않는다.** 독립 함수로 뺀 미들웨어는 TS가 Express 핸들러인 줄 몰라 매개변수가 `any`가 된다 → 타입 안전망의 구멍. 하필 인증 로직의 심장이 그 구멍 안에 있다
 - **"토큰이 유효하다"와 "유저가 존재한다"는 별개다.** JWT는 서버 상태를 보지 않는다
-- 운영에서 `NODE_ENV=production`을 안 걸면 **에러 응답에 스택 트레이스(절대 경로 포함)가 노출**된다 → M6에서 커스텀 에러 핸들러로 정리
-- 깨진 JSON은 `400`이 나가지만 body가 **HTML**이라 응답 형식이 일관되지 않다 → M6 항목
+- **CORS는 요청이 아니라 응답 읽기를 막는다.** 허용 안 된 출처의 요청도 **서버는 실행한다**(부작용 발생). 판단 주체는 브라우저 → curl엔 CORS가 없다. **서버 보안 장치가 아니라 사용자 보호 장치**
+- **CORS로는 CSRF를 못 막는다.** CSRF는 응답을 읽을 필요가 없기 때문. `SameSite`가 따로 필요하다
+- **쿠키는 포트를 구분하지 않는다.** CORS는 origin(포트 포함) 기준인데 쿠키는 도메인 기준 → `localhost:3000`과 `localhost:5173`이 쿠키를 공유한다
+- **`ERR_CONNECTION_REFUSED`는 CORS 에러가 아니다.** CORS 에러는 서버에 도달한 뒤에야 나온다. 연결 실패면 서버 생존부터 확인
+- **에러 메시지가 바뀌면 원인도 바뀐 것.** 같은 증상(2차 refresh 401)이라도 "저장소에 없음" → "만료됨"으로 문구가 달라지면 다른 버그다. 그래서 실패 사유를 구분해두면 디버깅이 빨라진다
 
 ## 7. 개념 문서 (`docs/`)
 
 마일스톤별 개념 설명을 마크다운으로 남긴다. 각 문서에 **🔑 복습 체크리스트**가 있어서, 나중엔 본문 없이 그것만 훑어도 된다.
 
-| 문서                                                    | 내용                                                                           |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [`m0-express-basics.md`](docs/m0-express-basics.md)     | Express 구조, 라우팅, `req`/`res`, ESM, **`req` 통째 로깅 금지 규칙**          |
-| [`m1-password-hashing.md`](docs/m1-password-hashing.md) | 평문·SHA256이 안 되는 이유, 솔트, bcrypt cost factor, `express.json()`         |
-| [`m2-login.md`](docs/m2-login.md)                       | `bcrypt.compare`, user enumeration, **타이밍 공격과 더미 해시** (실측값 포함)  |
-| [`m3-jwt.md`](docs/m3-jwt.md)                           | JWT 구조, **서명 ≠ 암호화**, payload 원칙, 만료, JWT vs 세션, 시크릿 관리      |
-| [`m4-auth-middleware.md`](docs/m4-auth-middleware.md)   | 미들웨어 원리(**같은 `req`가 흐른다**), Bearer 헤더, `verify` 예외, 401 vs 403 |
-| [`m5-refresh-token.md`](docs/m5-refresh-token.md)       | ⏳ **구현 전 (개념만)** — 역할 분리, XSS vs CSRF, 쿠키 옵션, 회전, 재사용 탐지 |
+| 문서                                                    | 내용                                                                                      |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [`m0-express-basics.md`](docs/m0-express-basics.md)     | Express 구조, 라우팅, `req`/`res`, ESM, **`req` 통째 로깅 금지 규칙**                     |
+| [`m1-password-hashing.md`](docs/m1-password-hashing.md) | 평문·SHA256이 안 되는 이유, 솔트, bcrypt cost factor, `express.json()`                    |
+| [`m2-login.md`](docs/m2-login.md)                       | `bcrypt.compare`, user enumeration, **타이밍 공격과 더미 해시** (실측값 포함)             |
+| [`m3-jwt.md`](docs/m3-jwt.md)                           | JWT 구조, **서명 ≠ 암호화**, payload 원칙, 만료, JWT vs 세션, 시크릿 관리                 |
+| [`m4-auth-middleware.md`](docs/m4-auth-middleware.md)   | 미들웨어 원리(**같은 `req`가 흐른다**), Bearer 헤더, `verify` 예외, 401 vs 403            |
+| [`m5-refresh-token.md`](docs/m5-refresh-token.md)       | 역할 분리, XSS vs CSRF, 쿠키 옵션, 회전, 재사용 탐지 + **13절 "구현하며 부딪힌 것" 10건** |
 
 > 규칙: **개념 설명이 나올 때마다 같은 형식으로 문서를 추가한다.** (한 줄 요약 → 본문 → 복습 체크리스트 → 흔한 실수)
 

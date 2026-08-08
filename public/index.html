@@ -178,13 +178,21 @@
         <dl>
           <dt>access token</dt>
           <dd id="state-access" class="dim">없음 (메모리 변수)</dd>
-          <dt>document.cookie</dt>
-          <dd id="state-cookie" class="dim">(비어 있음)</dd>
+          <dt>refreshToken (JS)</dt>
+          <dd id="state-cookie" class="ok">읽을 수 없음 ✅ (httpOnly)</dd>
+          <dt>그 외 쿠키</dt>
+          <dd id="state-other" class="dim">없음</dd>
         </dl>
         <p class="hint">
-          로그인해도 <code>document.cookie</code>는 계속 비어 있어야 한다 —
-          refresh 토큰이 <code>httpOnly</code>라 JS가 읽을 수 없기 때문. 이게
-          curl로는 확인할 수 없던 부분이다.
+          로그인해도 <code>refreshToken</code>은 계속 "읽을 수 없음"이어야 한다
+          — <code>httpOnly</code>라 JS가 접근할 수 없기 때문. curl로는 확인할 수
+          없던 부분이다.<br /><br />
+          "그 외 쿠키"에 낯선 값이 보인다면
+          <strong>다른 localhost 프로젝트</strong> 것이다. 쿠키는
+          <strong>포트를 구분하지 않아서</strong> <code>localhost:3000</code>과
+          <code>localhost:5173</code>이 같은 저장소를 공유한다 (CORS는 포트를
+          구분하는데 쿠키는 안 한다). 그것들이 여기 보이는 것 자체가
+          <code>httpOnly</code>가 아니라는 뜻이고, 우리 것과의 대조군이 된다.
         </p>
       </section>
 
@@ -254,11 +262,27 @@
           accessEl.className = "dim";
         }
 
-        // httpOnly 쿠키는 여기 안 나온다 — 그게 정상이다.
-        const raw = document.cookie;
+        // httpOnly 쿠키는 document.cookie 에 나오지 않는다 — 그게 정상이다.
+        const names = document.cookie
+          .split(";")
+          .map((entry) => entry.split("=")[0].trim())
+          .filter(Boolean);
 
-        cookieEl.textContent = raw || "(비어 있음)";
-        cookieEl.className = raw ? "" : "dim";
+        const isLeaked = names.includes("refreshToken");
+
+        cookieEl.textContent = isLeaked
+          ? "읽힘 ❌ httpOnly가 빠졌다"
+          : "읽을 수 없음 ✅ (httpOnly)";
+        cookieEl.className = isLeaked ? "err" : "ok";
+
+        // 쿠키는 포트를 구분하지 않으므로 다른 localhost 프로젝트 것이 섞여 보인다.
+        const others = names.filter((name) => name !== "refreshToken");
+        const otherEl = $("state-other");
+
+        otherEl.textContent = others.length
+          ? `${others.length}개 — ${others.join(", ")}`
+          : "없음";
+        otherEl.className = others.length ? "" : "dim";
       }
 
       async function call(path, { method = "GET", body, auth = false } = {}) {
