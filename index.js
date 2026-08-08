@@ -3,13 +3,18 @@ import { randomUUID } from "node:crypto";
 import bcrypt from "bcrypt";
 import express from "express";
 import jwt from "jsonwebtoken";
+import cookieParser from "cookie-parser";
+
+const REFRESH_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 const app = express();
 
 app.use(express.json());
+app.use(cookieParser());
 
 const DUMMY_HASH = await bcrypt.hash("dummy", 10);
 const users = {}; // { id: string; email: string; passwordHash: string}
+const refreshTokens = {};
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization; // 예: "Bearer eyJhbGci..."
@@ -107,7 +112,96 @@ app.post("/login", async (req, res) => {
     expiresIn: "15m",
   });
 
+  const refreshToken = randomUUID();
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    path: "/auth",
+    maxAge: REFRESH_MAX_AGE,
+  });
+
+  refreshTokens[refreshToken] = {
+    userId: user.id,
+    expiresAt: Date.now() + REFRESH_MAX_AGE,
+  };
+
   return res.status(200).json({ token });
+});
+
+app.post("/auth/refresh", (req, res) => {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (refreshTokens[refreshToken]) {
+    const refreshTokenInfo = refreshTokens[refreshToken]; // refreshTokens[refreshToken] 쓰기 귀찮아서
+
+    // 만료 -> 401
+    if (Date.now() > refreshTokenInfo.expiresAt) {
+      delete refreshTokens[refreshToken];
+      return res.status(401).json();
+    }
+
+    const user = Object.values(users).find(
+      (u) => u.id === refreshTokenInfo.userId,
+    );
+
+    if (!user) {
+      delete refreshTokens[refreshToken];
+      return res.status(401).json({ error: "인증에 실패했습니다." });
+    }
+
+    let newRefreshToken = refreshToken;
+
+    while (refreshToken === newRefreshToken) {
+      newRefreshToken = randomUUID();
+    }
+
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      path: "/auth",
+      maxAge: REFRESH_MAX_AGE,
+    });
+
+    refreshTokens[newRefreshToken] = {
+      userId: user.id,
+      expiresAt: Date.now() + REFRESH_MAX_AGE,
+    };
+
+    delete refreshTokens[refreshToken];
+
+    const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, {
+      expiresIn: "15m",
+    });
+
+    return res.status(200).json({ token });
+  }
+
+  return res.status(401).json({ error: "인증에 실패했습니다." });
+});
+
+app.post("/auth/logout", (req, res) => {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (refreshTokens[refreshToken]) {
+    const user = Object.values(users).find(
+      (u) => u.id === refreshTokens[refreshToken].userId,
+    );
+
+    if (!user) {
+      return res.status(401).json({ error: "인증에 실패했습니다." });
+    }
+
+    res.clearCookie("refreshToken", { path: "/auth" });
+
+    delete refreshTokens[refreshToken];
+
+    return res.status(200).json({ status: "ok" });
+  }
+
+  return res.status(401).json({ error: "인증에 실패했습니다." });
 });
 
 app.get("/me", authMiddleware, async (req, res) => {
